@@ -124,6 +124,8 @@ void            yield(void);
 uint            do_wmap(uint addr, int length, int flags, int fd);
 int             do_wunmap(uint addr);
 uint            do_va2pa(uint va);
+int             do_getwmapinfo(struct wmapinfo *wminfo);
+
 
 // swtch.S
 void            swtch(struct context**, struct context*);

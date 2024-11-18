@@ -674,3 +674,35 @@ uint do_va2pa(uint va)
   return pa | (va & 0xFFF); // Add offset within page (first 12 bits of VA)
 }
 
+/*
+ * Retrieves information about the process address space by populating struct wmapinfo.
+ * This system call should calculate the current number of memory maps (mmaps) in the process's address space and store the result in total_mmaps. 
+ * It should also populate addr[MAX_WMMAP_INFO] and length[MAX_WMAP_INFO] with the address and length of each wmap. 
+ * You can expect that the number of mmaps in the current process will not exceed MAX_WMAP_INFO. 
+ * The n_loaded_pages[MAX_WMAP_INFO] should store how many pages have been physically allocated for each wmap (corresponding index of addr and length arrays). 
+ * This field should reflect lazy allocation.
+ *
+ * @wminfo: A pointer to struct wmapinfo that will be filled by the system call.
+ * 
+ * @return: return SUCCESS to indicate success, and FAILED for failure.
+ */
+int do_getwmapinfo(struct wmapinfo *wminfo)
+{
+  // Acquire current process
+  struct proc *curproc = myproc();
+
+  // Making edits to proc, so acquire lock
+  acquire(&ptable.lock);
+
+  wminfo->total_mmaps = curproc->wmapinfo.total_mmaps;
+  for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+  {
+    wminfo->addr[i] = curproc->wmapinfo.addr[i];
+    wminfo->length[i] = curproc->wmapinfo.length[i];
+    wminfo->n_loaded_pages[i] = curproc->wmapinfo.n_loaded_pages[i];
+  }
+
+  release(&ptable.lock);
+  return SUCCESS;
+}
+
