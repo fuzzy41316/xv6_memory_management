@@ -89,3 +89,18 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int sys_wmap(void)
+{
+  uint addr;
+  int length;
+  int flags;
+  int fd;
+
+  if(argint(0, (int*)&addr) < 0) return FAILED;
+  if(argint(1, &length) < 0) return FAILED;
+  if(argint(2, &flags) < 0) return FAILED;
+  if(argint(3, &fd) < 0) return FAILED;
+
+  return wmap(addr, length, flags, fd);
+}

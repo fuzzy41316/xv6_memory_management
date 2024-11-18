@@ -78,6 +78,59 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
 
+  case T_PGFLT:
+  {
+    // Acquire the address at which a page fault occurred
+    uint fault_addr = rcr2();
+
+    // Acquire the current process
+    struct proc *curproc = myproc();
+    
+    // Iterate through mappings of the process
+    for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+    {
+      // Acquire the start and ending address of the current mapping
+      uint start_addr = curproc->wmapinfo.addr[i];
+      uint end_addr = start_addr + curproc->wmapinfo.length[i];
+
+      // Check that it's within bounds
+      if (fault_addr >= start_addr && fault_addr < end_addr)
+      {
+        // Then allocate a new page
+        char *mem = kalloc();
+
+        // If allocation fails, kill proc and exit
+        if (mem == 0)
+        {
+          cprintf("Page allocation failed\n");
+          curproc->killed = 1;
+          exit();
+        }
+
+        // Zero out the allocate memory for security
+        memset(mem, 0, PGSIZE);
+
+        // Map the allocated memory to the faulting address
+        if (mappages(curproc->pgdir, (char*)fault_addr, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0)
+        {
+          // If mapping fails, free, and kill proc
+          cprintf("Page mapping failed\n");
+          kfree(mem);
+          curproc->killed = 1;
+          exit();
+        }
+
+        // Increment the count of loaded pages for current mapping
+        curproc->wmapinfo.n_loaded_pages[i]++;
+        return;
+      }
+    }
+    // If the fault address is not a part of any mapping...
+    cprintf("Segmentation Fault\n");
+    curproc->killed = 1;
+    break;
+  }
+
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){

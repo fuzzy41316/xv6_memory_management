@@ -532,3 +532,42 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+
+uint wmap(uint addr, int length, int flags, int fd)
+{
+  // Acquire the current process
+  struct proc *curproc = myproc();
+
+  // Wmap only deals with fixed & shared mappings
+  if (!(flags & MAP_FIXED) || !(flags & MAP_SHARED)) return FAILED;
+
+  // Addr needs to be a multiple of pgsize, and wmap only serves this addr space
+  if (addr < 0x60000000 || addr >= 0x80000000 || addr % PGSIZE != 0) return FAILED;
+
+  // Length needs to be >= 0
+  if (length <= 0) return FAILED;
+
+  // Is there space for mapping?
+  if (curproc->wmapinfo.total_mmaps >= MAX_WMMAP_INFO) return FAILED;
+
+  // If so, check for overlapping mappings
+  for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+  {
+    uint start_addr = curproc->wmapinfo.addr[i];
+    uint end_addr = start_addr + curproc->wmapinfo.length[i];
+
+    // If there is an overlap in address, FAILED
+    if ((addr >= start_addr && addr < end_addr) || (addr + length > start_addr && addr + length <= end_addr)) return FAILED;
+  }
+
+  // Otherwise, add the new mapping
+  int index = curproc->wmapinfo.total_mmaps;
+  curproc->wmapinfo.addr[index] = addr;
+  curproc->wmapinfo.length[index] = length;
+  curproc->wmapinfo.n_loaded_pages[index] = 0;  // No loaded pages yet
+  curproc->wmapinfo.total_mmaps++;
+
+  // Upon successfull mapping, return the address
+  return addr;
+}
