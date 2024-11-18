@@ -533,8 +533,25 @@ procdump(void)
   }
 }
 
-
-uint wmap(uint addr, int length, int flags, int fd)
+/*
+ * wmap has two modes of operation. First is "anonymous" memory allocation which has aspects similar to malloc. The real power of wmap comes through the support of "file-backed" mapping. 
+ * Wait - what does file-backed mapping mean? It means you create a memory representation of a file. Reading data from that memory region is the same as reading data from the file. 
+ * What happens if we write to memory that is backed by a file? Will it be reflected in the file? Well, that depends on the flags you use for wmap. 
+ * When the flag MAP_SHARED is used, you need to write the (perhaps modified) contents of the memory back to the file upon wunmap.
+ * 
+ * @addr: Depending on the flags (MAP_FIXED, more on that later), it could be a hint for what "virtual" address wmap should use for the mapping, or the "virtual" address that wmap MUST use for the mapping.
+ * 
+ * @length: The length of the mapping in bytes. It must be greater than 0.
+ * 
+ * @flags:  The kind of memory mapping you are requesting for. Flags can be ORed together (e.g., MAP_SHARED | MAP_ANONYMOUS). You should define these flags as constants in the wmap.h header file. 
+ * Use the snippet provided in the Hints section. If you look at the man page, there are many flags for various purposes. In your implementation, you only need to implement these flags:
+ * 
+ * @fd: If it's a file-backed mapping, this is the file descriptor for the file to be mapped. You can assume that fd belongs to a file of type FD_INODE. 
+ * Also, you can assume that fd was opened in O_RDRW mode. In case of MAP_ANONYMOUS (see flags), you should ignore this argument.
+ * 
+ * @return: the starting virtual address of the memory on success, and FAILED on failure. That virtual address must be a multiple of page size.
+*/
+uint do_wmap(uint addr, int length, int flags, int fd)
 {
   // Acquire the current process
   struct proc *curproc = myproc();
@@ -570,4 +587,64 @@ uint wmap(uint addr, int length, int flags, int fd)
 
   // Upon successfull mapping, return the address
   return addr;
+}
+
+/*
+ * wunmap removes the mapping starting at addr from the process virtual address space. If it's a file-backed mapping with MAP_SHARED, it writes the memory data back to the file to ensure the file remains up-to-date. 
+ * So, wunmap does not partially unmap any mmap.
+ *
+ * @addr: The starting address of the mapping to be removed. It must be page aligned and the start address of some existing wmap.
+ * 
+ * @return: return SUCCESS to indicate success, and FAILED for failure.
+ */
+int do_wunmap(uint addr)
+{
+  // Acquire the current process
+  struct proc *curproc = myproc();
+
+  // Find any metadata for the mmap starting at addr, and remove from the data structure
+  int mapping_found = -1;
+  int index = -1;
+  for (int i = 0; i < MAX_WMMAP_INFO; i++)
+  {
+    if (curproc->wmapinfo.addr[i] == addr)
+    {
+      mapping_found = 0;
+      index = i;
+      break;
+    }
+  }
+
+  // Mapping wasn't found in proc list
+  if (mapping_found != 0) return FAILED;
+
+  // Get the length from the mapping before removing
+  int length = curproc->wmapinfo.length[index];
+
+  // Remove the mapping
+  curproc->wmapinfo.addr[index] = 0;
+  curproc->wmapinfo.length[index] = 0;
+  curproc->wmapinfo.n_loaded_pages[index] = 0;
+  curproc->wmapinfo.total_mmaps--;
+
+  // Remove all locations from selected mapping
+  for (uint va = addr; va < addr + length; va += PGSIZE)
+  {
+    // Wlak page directory and find page table entry from virtual address
+    pte_t *pte = walkpgdir(curproc->pgdir, (void *)va, 0);
+
+    // Page table entry is present
+    if (pte && (*pte & PTE_P))
+    {
+      // Convert to physical address
+      uint pa = PTE_ADDR(*pte);
+
+      // Free from memory
+      kfree(P2V(pa));
+
+      // Any future reference to va will fail
+      *pte = 0;
+    }
+  }
+  return SUCCESS;
 }

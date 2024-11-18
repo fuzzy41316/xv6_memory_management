@@ -102,5 +102,13 @@ int sys_wmap(void)
   if(argint(2, &flags) < 0) return FAILED;
   if(argint(3, &fd) < 0) return FAILED;
 
-  return wmap(addr, length, flags, fd);
+  return do_wmap(addr, length, flags, fd);
+}
+
+int sys_wunmap(void)
+{
+  uint addr;
+  if(argint(0, (int*)&addr) < 0) return FAILED;
+
+  return do_wunmap(addr);
 }
