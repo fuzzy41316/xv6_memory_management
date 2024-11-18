@@ -5,7 +5,10 @@
 #include "mmu.h"
 #include "x86.h"
 #include "proc.h"
+#include "fs.h"
 #include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct {
   struct spinlock lock;
@@ -583,6 +586,7 @@ uint do_wmap(uint addr, int length, int flags, int fd)
   curproc->wmapinfo.addr[index] = addr;
   curproc->wmapinfo.length[index] = length;
   curproc->wmapinfo.n_loaded_pages[index] = 0;  // No loaded pages yet
+  curproc->wmapinfo.files[index] = (flags & MAP_ANONYMOUS) ? 0 : filedup(curproc->ofile[fd]);  // if MAP_ANONYMOUS, IGNORE FILE
   curproc->wmapinfo.total_mmaps++;
 
   // Upon successfull mapping, return the address
@@ -621,31 +625,68 @@ int do_wunmap(uint addr)
   // Get the length from the mapping before removing
   int length = curproc->wmapinfo.length[index];
 
+  // Get the file, to see if we are writing back to file
+  struct file *f = curproc->wmapinfo.files[index];
+
+  // For file backed mapping
+  if (f != 0) 
+  {
+    // Walk page directory to find PTE from VA
+    for (uint va = addr; va < addr + length; va += PGSIZE)
+    {
+      pte_t *pte = walkpgdir(curproc->pgdir, (void*)va, 0);
+
+      // If PTE is present
+      if (pte && (*pte & PTE_P))
+      {
+        // Grab the physical address
+        uint pa = PTE_ADDR(*pte);
+
+        // Write back to the file
+        begin_op();
+        writei(f->ip, P2V(pa), va - addr, PGSIZE);
+        end_op();
+
+        // Free physical memory
+        kfree(P2V(pa));
+        *pte = 0;
+      }
+    }
+
+    // Close the duplicated file
+    fileclose(f);
+  }
+
+  // For anonymous mapping, free the memory
+  else 
+  {
+    for (uint va = addr; va < addr + length; va += PGSIZE)
+    {
+      // Walk page directory and find page table entry from virtual address
+      pte_t *pte = walkpgdir(curproc->pgdir, (void *)va, 0);
+
+      // Page table entry is present
+      if (pte && (*pte & PTE_P))
+      {
+        // Convert to physical address (we can assume offset is 0)
+        uint pa = PTE_ADDR(*pte);
+
+        // Free from memory
+        kfree(P2V(pa));
+
+        // Any future reference to va will fail
+        *pte = 0;
+      }
+    }
+  }
+
   // Remove the mapping
   curproc->wmapinfo.addr[index] = 0;
   curproc->wmapinfo.length[index] = 0;
   curproc->wmapinfo.n_loaded_pages[index] = 0;
+  curproc->wmapinfo.files[index] = 0;
   curproc->wmapinfo.total_mmaps--;
 
-  // Remove all locations from selected mapping
-  for (uint va = addr; va < addr + length; va += PGSIZE)
-  {
-    // Walk page directory and find page table entry from virtual address
-    pte_t *pte = walkpgdir(curproc->pgdir, (void *)va, 0);
-
-    // Page table entry is present
-    if (pte && (*pte & PTE_P))
-    {
-      // Convert to physical address (we can assume offset is 0)
-      uint pa = PTE_ADDR(*pte);
-
-      // Free from memory
-      kfree(P2V(pa));
-
-      // Any future reference to va will fail
-      *pte = 0;
-    }
-  }
   return SUCCESS;
 }
 
@@ -700,6 +741,7 @@ int do_getwmapinfo(struct wmapinfo *wminfo)
     wminfo->addr[i] = curproc->wmapinfo.addr[i];
     wminfo->length[i] = curproc->wmapinfo.length[i];
     wminfo->n_loaded_pages[i] = curproc->wmapinfo.n_loaded_pages[i];
+    wminfo->files[i] = curproc->wmapinfo.files[i];
   }
 
   release(&ptable.lock);

@@ -1,5 +1,6 @@
 struct stat;
 struct rtcdate;
+struct wmapinfo;
 
 // system calls
 int fork(void);

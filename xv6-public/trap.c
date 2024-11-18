@@ -6,7 +6,10 @@
 #include "proc.h"
 #include "x86.h"
 #include "traps.h"
+#include "fs.h"
 #include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
 
 // Interrupt descriptor table (shared by all CPUs).
 struct gatedesc idt[256];
@@ -86,7 +89,7 @@ trap(struct trapframe *tf)
     // Acquire the current process
     struct proc *curproc = myproc();
     
-    // Iterate through mappings of the process
+    // Iterate through mappings of the process ( LAZY ALLOCATION )
     for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
     {
       // Acquire the start and ending address of the current mapping
@@ -107,8 +110,31 @@ trap(struct trapframe *tf)
           exit();
         }
 
-        // Zero out the allocate memory for security
-        memset(mem, 0, PGSIZE);
+
+        // HANDLE FILE-BACKED MEMORY
+        struct file *f = curproc->wmapinfo.files[i];
+        if (f != 0)
+        {
+          
+          begin_op();
+          int n = readi(f->ip, mem, fault_addr - start_addr, PGSIZE);
+          end_op();
+          
+          if (n < 0)
+          {
+            cprintf("Failed to read file\n");
+            kfree(mem);
+            curproc->killed = 1;
+            exit();
+          }
+
+          // If < PGSIZE bytes were read, zero out the remaining bytes
+          if (n < PGSIZE) memset(mem + n, 0, PGSIZE - n);
+          
+        }
+
+        // Otherwise, zero-initialize memory for anonymous mapping
+        else memset(mem, 0, PGSIZE);
 
         // Map the allocated memory to the faulting address (making them writable and user-accessible)
         if (mappages(curproc->pgdir, (char*)fault_addr, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0)
