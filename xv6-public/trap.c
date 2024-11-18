@@ -110,7 +110,7 @@ trap(struct trapframe *tf)
         // Zero out the allocate memory for security
         memset(mem, 0, PGSIZE);
 
-        // Map the allocated memory to the faulting address
+        // Map the allocated memory to the faulting address (making them writable and user-accessible)
         if (mappages(curproc->pgdir, (char*)fault_addr, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0)
         {
           // If mapping fails, free, and kill proc

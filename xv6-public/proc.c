@@ -630,13 +630,13 @@ int do_wunmap(uint addr)
   // Remove all locations from selected mapping
   for (uint va = addr; va < addr + length; va += PGSIZE)
   {
-    // Wlak page directory and find page table entry from virtual address
+    // Walk page directory and find page table entry from virtual address
     pte_t *pte = walkpgdir(curproc->pgdir, (void *)va, 0);
 
     // Page table entry is present
     if (pte && (*pte & PTE_P))
     {
-      // Convert to physical address
+      // Convert to physical address (we can assume offset is 0)
       uint pa = PTE_ADDR(*pte);
 
       // Free from memory
@@ -648,3 +648,29 @@ int do_wunmap(uint addr)
   }
   return SUCCESS;
 }
+
+/*
+ * Translate a virtual address according to the page table for the calling process. 
+ * (NOT the physical page! also consider the offset)
+ * 
+ * @va: The virtual address to translate
+ *
+ * @return:  return the physical address on success, FAILED on failure
+ */
+uint do_va2pa(uint va)
+{
+  // Acquire the current process
+  struct proc *curproc = myproc();
+
+  // Walk page directory and find page table entry from the VA
+  pte_t *pte = walkpgdir(curproc->pgdir, (void*)va, 0);
+
+  // If VA is unaccessible or pte is not present, return FAILED
+  if (!pte || !(*pte & PTE_P)) return FAILED;
+
+  // Otherwise, acquire the physical address of the PTE
+  uint pa = PTE_ADDR(*pte);
+
+  return pa | (va & 0xFFF); // Add offset within page (first 12 bits of VA)
+}
+
