@@ -202,8 +202,7 @@ fork(void)
 
   // Copy wmap mappings from parent to child
   np->wmapinfo.total_mmaps = curproc->wmapinfo.total_mmaps;
-  for(i = 0; i < curproc->wmapinfo.total_mmaps; i++)
-  {
+  for(i = 0; i < curproc->wmapinfo.total_mmaps; i++){
     np->wmapinfo.addr[i] = curproc->wmapinfo.addr[i];
     np->wmapinfo.length[i] = curproc->wmapinfo.length[i];
     np->wmapinfo.n_loaded_pages[i] = curproc->wmapinfo.n_loaded_pages[i];
@@ -283,10 +282,6 @@ exit(void)
   end_op();
   curproc->cwd = 0;
 
-  acquire(&ptable.lock);
-
-  // Un map everything in curproc
-  /*
   for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
   {
     if (curproc->wmapinfo.addr[i] != 0)
@@ -294,7 +289,8 @@ exit(void)
       do_wunmap(curproc->wmapinfo.addr[i]);
     }
   }
-  */
+
+  acquire(&ptable.lock);
 
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);

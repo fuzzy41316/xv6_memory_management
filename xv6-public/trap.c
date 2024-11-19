@@ -114,7 +114,7 @@ trap(struct trapframe *tf)
         pte_t *pte = walkpgdir(curproc->pgdir, (void*)fault_addr, 0);
         uint pa = PTE_ADDR(*pte);
         uint flags = PTE_FLAGS(*pte);
-        if ((flags & PTE_COW) && (flags & ~PTE_W))
+        if ((flags & PTE_COW) && !(flags & PTE_W))
         {                  
           // Copy contents from old page to new page for COW
           memmove(mem, (char*)P2V(pa), PGSIZE);

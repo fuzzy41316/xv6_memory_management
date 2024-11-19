@@ -123,3 +123,13 @@ void dec_ref_count(uint pa)
   ref_cnt[index]--;
   if(kmem.use_lock) release(&kmem.lock);
 }
+
+uint get_ref_count(uint pa)
+{
+  uint index = (pa - EXTMEM) / PGSIZE;
+  if (kmem.use_lock) acquire(&kmem.lock);
+  uint count = ref_cnt[index];
+  if(kmem.use_lock) release(&kmem.lock);
+
+  return count;
+}

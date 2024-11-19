@@ -71,7 +71,7 @@ void            kinit1(void*, void*);
 void            kinit2(void*, void*);
 void            inc_ref_count(uint pa);
 void            dec_ref_count(uint pa);
-
+uint            get_ref_count(uint pa);
 
 // kbd.c
 void            kbdintr(void);
