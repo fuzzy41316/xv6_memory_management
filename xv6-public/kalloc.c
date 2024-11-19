@@ -25,7 +25,7 @@ struct {
 
 
 // Array to store reference counts to a physical page
-static uint ref_cnt[(PHYSTOP - EXTMEM) / PGSIZE];
+static uint ref_cnt[PHYSTOP / PGSIZE];
 
 // Initialization happens in two phases.
 // 1. main() calls kinit1() while still using entrypgdir to place just
@@ -69,10 +69,10 @@ kfree(char *v)
     panic("kfree");
 
   // Dec page references on free
-  if (ref_cnt[(V2P(v) - EXTMEM) / PGSIZE] > 0) ref_cnt[(V2P(v) - EXTMEM) / PGSIZE]--;
+  if (ref_cnt[V2P(v) / PGSIZE] > 0) ref_cnt[V2P(v) / PGSIZE]--;
 
   // Free the page if no more references  
-  if (ref_cnt[(V2P(v) - EXTMEM) / PGSIZE] == 0) 
+  if (ref_cnt[V2P(v) / PGSIZE] == 0) 
   {
     if(kmem.use_lock) acquire(&kmem.lock);
 
@@ -101,7 +101,7 @@ kalloc(void)
   if(r)
   {
     kmem.freelist = r->next;
-    ref_cnt[(V2P((char*)r) - EXTMEM) / PGSIZE] = 1;
+    ref_cnt[V2P((char*)r) / PGSIZE] = 1;
   }
   if(kmem.use_lock)
     release(&kmem.lock);
@@ -110,7 +110,7 @@ kalloc(void)
 
 void inc_ref_count(uint pa) 
 {
-  uint index = (pa - EXTMEM) / PGSIZE;
+  uint index = pa / PGSIZE;
   if (kmem.use_lock) acquire(&kmem.lock);
   ref_cnt[index]++;
   if(kmem.use_lock) release(&kmem.lock);
@@ -118,7 +118,7 @@ void inc_ref_count(uint pa)
 
 void dec_ref_count(uint pa)
 {
-  uint index = (pa - EXTMEM) / PGSIZE;
+  uint index = pa / PGSIZE;
   if (kmem.use_lock) acquire(&kmem.lock);
   ref_cnt[index]--;
   if(kmem.use_lock) release(&kmem.lock);
@@ -126,7 +126,7 @@ void dec_ref_count(uint pa)
 
 uint get_ref_count(uint pa)
 {
-  uint index = (pa - EXTMEM) / PGSIZE;
+  uint index = pa / PGSIZE;
   if (kmem.use_lock) acquire(&kmem.lock);
   uint count = ref_cnt[index];
   if(kmem.use_lock) release(&kmem.lock);
