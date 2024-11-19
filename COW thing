@@ -1,0 +1,52 @@
+// Given a parent process's page table, create a copy
+// of it for a child.
+pde_t*
+copyuvm(pde_t *pgdir, uint sz)
+{
+    pde_t *d;
+    pte_t *pte;
+    uint pa, i, flags;
+
+    if((d = setupkvm()) == 0)
+        return 0;
+    for(i = 0; i < sz; i += PGSIZE){
+        if((pte = walkpgdir(pgdir, (void *)i, 0)) == 0)
+            panic("copyuvm: pte should exist");
+        if(!(*pte & PTE_P))
+            panic("copyuvm: page not present");
+        pa = PTE_ADDR(*pte);
+        flags = PTE_FLAGS(*pte);
+
+        // Skip page allocation and set up COW for writable pages
+        if(flags & PTE_W)
+        {
+          // Clear the writable bit and set the COW flag
+          *pte &= ~PTE_W;
+          *pte |= PTE_COW;
+
+          // Update flags for the child process
+          flags &= ~PTE_W;
+          flags |= PTE_COW;
+
+          // Map the page into the child's page table
+          if(mappages(d, (void *)i, PGSIZE, pa, flags) < 0)
+              goto bad;
+
+          // Increment the reference count for the shared page
+          inc_ref_count(pa);
+        } 
+        else 
+        {
+          // For read-only pages, simply map them
+          if(mappages(d, (void *)i, PGSIZE, pa, flags) < 0)
+              goto bad;
+
+          // Increment the reference count
+          inc_ref_count(pa);
+        }
+    }
+    return d;
+bad:
+    freevm(d);
+    return 0;
+}
