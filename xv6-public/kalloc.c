@@ -23,6 +23,10 @@ struct {
   struct run *freelist;
 } kmem;
 
+
+// Array to store reference counts to a physical page
+static uint ref_cnt[(PHYSTOP - EXTMEM) / PGSIZE];
+
 // Initialization happens in two phases.
 // 1. main() calls kinit1() while still using entrypgdir to place just
 // the pages mapped by entrypgdir on free list.
@@ -64,16 +68,22 @@ kfree(char *v)
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
-  memset(v, 1, PGSIZE);
+  // Dec page references on free
+  if (ref_cnt[(V2P(v) - EXTMEM) / PGSIZE] > 0) ref_cnt[(V2P(v) - EXTMEM) / PGSIZE]--;
 
-  if(kmem.use_lock)
-    acquire(&kmem.lock);
-  r = (struct run*)v;
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  if(kmem.use_lock)
-    release(&kmem.lock);
+  // Free the page if no more references  
+  if (ref_cnt[(V2P(v) - EXTMEM) / PGSIZE] == 0) 
+  {
+    if(kmem.use_lock) acquire(&kmem.lock);
+
+    // Fill with junk to catch dangling refs.
+    memset(v, 1, PGSIZE);
+    r = (struct run*)v;
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+    
+    if(kmem.use_lock) release(&kmem.lock);
+  }
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -87,10 +97,29 @@ kalloc(void)
   if(kmem.use_lock)
     acquire(&kmem.lock);
   r = kmem.freelist;
+  // Set reference count to 1 if page allocated
   if(r)
+  {
     kmem.freelist = r->next;
+    ref_cnt[(V2P((char*)r) - EXTMEM) / PGSIZE] = 1;
+  }
   if(kmem.use_lock)
     release(&kmem.lock);
   return (char*)r;
 }
 
+void inc_ref_count(uint pa) 
+{
+  uint index = (pa - EXTMEM) / PGSIZE;
+  if (kmem.use_lock) acquire(&kmem.lock);
+  ref_cnt[index]++;
+  if(kmem.use_lock) release(&kmem.lock);
+}
+
+void dec_ref_count(uint pa)
+{
+  uint index = (pa - EXTMEM) / PGSIZE;
+  if (kmem.use_lock) acquire(&kmem.lock);
+  ref_cnt[index]--;
+  if(kmem.use_lock) release(&kmem.lock);
+}

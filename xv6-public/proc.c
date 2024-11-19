@@ -199,6 +199,39 @@ fork(void)
     np->state = UNUSED;
     return -1;
   }
+
+  // Copy wmap mappings from parent to child
+  np->wmapinfo.total_mmaps = curproc->wmapinfo.total_mmaps;
+  for(i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+  {
+    np->wmapinfo.addr[i] = curproc->wmapinfo.addr[i];
+    np->wmapinfo.length[i] = curproc->wmapinfo.length[i];
+    np->wmapinfo.n_loaded_pages[i] = curproc->wmapinfo.n_loaded_pages[i];
+    np->wmapinfo.files[i] = curproc->wmapinfo.files[i];
+
+    // Duplicate file if it's a file-backed mapping
+    if(np->wmapinfo.files[i]) filedup(np->wmapinfo.files[i]);
+
+    // Map the same virtual addresses in child
+    uint start = np->wmapinfo.addr[i];
+    uint len = np->wmapinfo.length[i];
+    for(uint va = start; va < start + len; va += PGSIZE)
+    {
+      pte_t *pte_parent = walkpgdir(curproc->pgdir, (void *)va, 0);
+      if(!pte_parent || !(*pte_parent & PTE_P))
+        continue; // Skip if page not present
+
+      uint pa = PTE_ADDR(*pte_parent);
+      uint flags = PTE_FLAGS(*pte_parent);
+
+      // Map the page in the child's page table
+      if(mappages(np->pgdir, (void *)va, PGSIZE, pa, flags) < 0) panic("fork: mappages failed");
+
+      // Increase reference count for the physical page (parent)
+      inc_ref_count(pa);
+    }
+  }
+
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
@@ -211,7 +244,7 @@ fork(void)
       np->ofile[i] = filedup(curproc->ofile[i]);
   np->cwd = idup(curproc->cwd);
 
-  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));  
 
   pid = np->pid;
 
@@ -251,6 +284,17 @@ exit(void)
   curproc->cwd = 0;
 
   acquire(&ptable.lock);
+
+  // Un map everything in curproc
+  /*
+  for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+  {
+    if (curproc->wmapinfo.addr[i] != 0)
+    {
+      do_wunmap(curproc->wmapinfo.addr[i]);
+    }
+  }
+  */
 
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
@@ -643,7 +687,7 @@ int do_wunmap(uint addr)
         uint pa = PTE_ADDR(*pte);
 
         // Write back to the file
-        begin_op();
+        begin_op(); 
         writei(f->ip, P2V(pa), va - addr, PGSIZE);
         end_op();
 
@@ -654,7 +698,7 @@ int do_wunmap(uint addr)
     }
 
     // Close the duplicated file
-    fileclose(f);
+    //fileclose(f);
   }
 
   // For anonymous mapping, free the memory

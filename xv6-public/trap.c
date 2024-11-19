@@ -109,7 +109,26 @@ trap(struct trapframe *tf)
           curproc->killed = 1;
           exit();
         }
+        
+        // HANDLE COW
+        pte_t *pte = walkpgdir(curproc->pgdir, (void*)fault_addr, 0);
+        uint pa = PTE_ADDR(*pte);
+        uint flags = PTE_FLAGS(*pte);
+        if ((flags & PTE_COW) && (flags & ~PTE_W))
+        {                  
+          // Copy contents from old page to new page for COW
+          memmove(mem, (char*)P2V(pa), PGSIZE);
 
+          // Update reference counts
+          dec_ref_count(pa);
+          inc_ref_count(V2P(mem));
+
+          // Update the PTE to point to the new page, set writable, and remove COW flag
+          *pte = (V2P(mem) | PTE_W | PTE_U | PTE_P) & ~PTE_COW;
+
+          // Flush the TLB for this page
+          lcr3(V2P(curproc->pgdir));
+        }
 
         // HANDLE FILE-BACKED MEMORY
         struct file *f = curproc->wmapinfo.files[i];

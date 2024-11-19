@@ -336,6 +336,23 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: page not present");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
+
+    // Deal with copy-on-write for mmaped pages
+    if ((flags & PTE_W) && (*pte >= 0x60000000) && (*pte < 0x80000000))
+    {
+      // Modify parent PTE: clear writable, set COW
+      *pte &= ~PTE_W;
+      *pte |= PTE_COW;
+
+      // Update flags for child
+      flags &= ~PTE_W;
+      flags |= PTE_COW;
+
+      // Increment ref count for shared
+      inc_ref_count(pa);
+    }
+    // If not writable, ignore it
+
     if((mem = kalloc()) == 0)
       goto bad;
     memmove(mem, (char*)P2V(pa), PGSIZE);
