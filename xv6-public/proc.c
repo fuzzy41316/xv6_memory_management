@@ -91,6 +91,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->wmapinfo.total_mmaps = 0;
 
   release(&ptable.lock);
 
@@ -192,44 +193,65 @@ fork(void)
     return -1;
   }
 
-  // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
-    kfree(np->kstack);
-    np->kstack = 0;
-    np->state = UNUSED;
-    return -1;
-  }
-
-  // Copy wmap mappings from parent to child
-  np->wmapinfo.total_mmaps = curproc->wmapinfo.total_mmaps;
-  for(i = 0; i < curproc->wmapinfo.total_mmaps; i++){
-    np->wmapinfo.addr[i] = curproc->wmapinfo.addr[i];
-    np->wmapinfo.length[i] = curproc->wmapinfo.length[i];
-    np->wmapinfo.n_loaded_pages[i] = curproc->wmapinfo.n_loaded_pages[i];
-    np->wmapinfo.files[i] = curproc->wmapinfo.files[i];
-
-    // Duplicate file if it's a file-backed mapping
-    if(np->wmapinfo.files[i]) filedup(np->wmapinfo.files[i]);
-
-    // Map the same virtual addresses in child
-    uint start = np->wmapinfo.addr[i];
-    uint len = np->wmapinfo.length[i];
-    for(uint va = start; va < start + len; va += PGSIZE)
+  // If not a child of a wmapped process, then COW
+  if (curproc->wmapinfo.total_mmaps == 0)
+  {
+    if((np->pgdir = cow_copyuvm(curproc->pgdir, curproc->sz)) == 0)
     {
-      pte_t *pte_parent = walkpgdir(curproc->pgdir, (void *)va, 0);
-      if(!pte_parent || !(*pte_parent & PTE_P))
-        continue; // Skip if page not present
-
-      uint pa = PTE_ADDR(*pte_parent);
-      uint flags = PTE_FLAGS(*pte_parent);
-
-      // Map the page in the child's page table
-      if(mappages(np->pgdir, (void *)va, PGSIZE, pa, flags) < 0) panic("fork: mappages failed");
-
-      // Increase reference count for the physical page (parent)
-      inc_ref_count(pa);
+      kfree(np->kstack);
+      np->kstack = 0;
+      np->state = UNUSED;
+      return -1;
     }
   }
+  // Otherwise, mmaped process
+  else
+  {
+    if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0)
+    {
+      kfree(np->kstack);
+      np->kstack = 0;
+      np->state = UNUSED;
+      return -1;
+    }
+
+    // Copy wmap mappings from parent to child
+    np->wmapinfo.total_mmaps = curproc->wmapinfo.total_mmaps;
+    for(i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+    {
+      np->wmapinfo.addr[i] = curproc->wmapinfo.addr[i];
+      np->wmapinfo.length[i] = curproc->wmapinfo.length[i];
+      np->wmapinfo.n_loaded_pages[i] = curproc->wmapinfo.n_loaded_pages[i];
+      np->wmapinfo.files[i] = curproc->wmapinfo.files[i];
+
+      // Duplicate file if it's a file-backed mapping
+      if(np->wmapinfo.files[i]) filedup(np->wmapinfo.files[i]);
+
+      // Map the same virtual addresses in child
+      uint start = np->wmapinfo.addr[i];
+      uint len = np->wmapinfo.length[i];
+      for(uint va = start; va < start + len; va += PGSIZE)
+      {
+        pte_t *pte_parent = walkpgdir(curproc->pgdir, (void *)va, 0);
+        if(!pte_parent || !(*pte_parent & PTE_P))
+          continue; // Skip if page not present
+
+        uint pa = PTE_ADDR(*pte_parent);
+        uint flags = PTE_FLAGS(*pte_parent);
+
+        // Map the page in the child's page table
+        if(mappages(np->pgdir, (void *)va, PGSIZE, pa, flags) < 0) panic("fork: mappages failed");
+
+        // Increase reference count for the physical page (parent)
+        inc_ref_count(pa);
+      }
+    }
+  }
+
+  // Flush TLB after modifying PTEs
+  lcr3(V2P(np->pgdir));
+  lcr3(V2P(curproc->pgdir));
+  
 
   np->sz = curproc->sz;
   np->parent = curproc;
@@ -282,13 +304,50 @@ exit(void)
   end_op();
   curproc->cwd = 0;
 
-  for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++)
+  // Remove all mappings from the process's address space
+  for (uint va = 0; va < curproc->sz; va += PGSIZE) 
   {
-    if (curproc->wmapinfo.addr[i] != 0)
+    pte_t *pte = walkpgdir(curproc->pgdir, (void *)va, 0);
+    if (pte && (*pte & PTE_P)) 
     {
-      do_wunmap(curproc->wmapinfo.addr[i]);
+      uint pa = PTE_ADDR(*pte);
+      if (pa != 0) {
+        kfree(P2V(pa));
+        *pte = 0;
+      }
     }
   }
+
+  // Handle wmapinfo mappings
+  for (int i = 0; i < curproc->wmapinfo.total_mmaps; i++) 
+  {
+    uint start_addr = curproc->wmapinfo.addr[i];
+    uint length = curproc->wmapinfo.length[i];
+    struct file *f = curproc->wmapinfo.files[i];
+
+    for (uint va = start_addr; va < start_addr + length; va += PGSIZE) 
+    {
+      pte_t *pte = walkpgdir(curproc->pgdir, (void *)va, 0);
+      if (pte && (*pte & PTE_P))
+       {
+        uint pa = PTE_ADDR(*pte);
+        if (pa != 0) 
+        {
+          if (f != 0) 
+          {
+            // Write back to the file if it's a file-backed mapping
+            begin_op();
+            writei(f->ip, P2V(pa), va - start_addr, PGSIZE);
+            end_op();
+          }
+          kfree(P2V(pa));
+          *pte = 0;
+        }
+      }
+    }
+  }
+
+  lcr3(V2P(curproc->pgdir));
 
   acquire(&ptable.lock);
 

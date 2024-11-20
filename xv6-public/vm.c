@@ -336,23 +336,6 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: page not present");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-
-    // Deal with copy-on-write for mmaped pages
-    if ((flags & PTE_W) && (*pte >= 0x60000000) && (*pte < 0x80000000))
-    {
-      // Modify parent PTE: clear writable, set COW
-      *pte &= ~PTE_W;
-      *pte |= PTE_COW;
-
-      // Update flags for child
-      flags &= ~PTE_W;
-      flags |= PTE_COW;
-
-      // Increment ref count for shared
-      inc_ref_count(pa);
-    }
-    // If not writable, ignore it
-
     if((mem = kalloc()) == 0)
       goto bad;
     memmove(mem, (char*)P2V(pa), PGSIZE);
@@ -366,6 +349,57 @@ copyuvm(pde_t *pgdir, uint sz)
 bad:
   freevm(d);
   return 0;
+}
+
+pde_t*
+cow_copyuvm(pde_t *pgdir, uint sz)
+{
+    pde_t *d;
+    pte_t *pte;
+    uint pa, i, flags;
+
+    if((d = setupkvm()) == 0)
+        return 0;
+    for(i = 0; i < sz; i += PGSIZE){
+        if((pte = walkpgdir(pgdir, (void *)i, 0)) == 0)
+            panic("copyuvm: pte should exist");
+        if(!(*pte & PTE_P))
+            panic("copyuvm: page not present");
+        pa = PTE_ADDR(*pte);
+        flags = PTE_FLAGS(*pte);
+
+        // Skip page allocation and set up COW for writable pages
+        if(flags & PTE_W)
+        {
+          // Clear the writable bit and set the COW flag
+          *pte &= ~PTE_W;
+          *pte |= PTE_COW;
+
+          // Update flags for the child process
+          flags &= ~PTE_W;
+          flags |= PTE_COW;
+
+          // Map the page into the child's page table
+          if(mappages(d, (void *)i, PGSIZE, pa, flags) < 0)
+              goto bad;
+
+          // Increment the reference count for the shared page
+          inc_ref_count(pa);
+        } 
+        else 
+        {
+          // For read-only pages, simply map them
+          if(mappages(d, (void *)i, PGSIZE, pa, flags) < 0)
+              goto bad;
+
+          // Increment the reference count
+          inc_ref_count(pa);
+        }
+    }
+    return d;
+bad:
+    freevm(d);
+    return 0;
 }
 
 //PAGEBREAK!
