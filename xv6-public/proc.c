@@ -667,6 +667,9 @@ uint do_wmap(uint addr, int length, int flags, int fd)
   // Length needs to be >= 0
   if (length <= 0) return FAILED;
 
+  // Check that size of mapping is not greater than addr space
+  if ((addr + length) >= 0x80000000) return FAILED;
+
   // Is there space for mapping?
   if (curproc->wmapinfo.total_mmaps >= MAX_WMMAP_INFO) return FAILED;
 
